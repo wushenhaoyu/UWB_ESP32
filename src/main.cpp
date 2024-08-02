@@ -17,6 +17,13 @@
               发送PGSTO 取消定位
 */
 #include <HardwareSerial.h>
+
+
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#ifndef uS_TO_S_FACTOR
+#define uS_TO_S_FACTOR 1000000
+#endif
 #define SERIAL2_RX_PIN 4
 #define SERIAL2_TX_PIN 5
 #define SERIAL1_RX_PIN 16
@@ -31,15 +38,30 @@
 #define END 4
 
 #define Serial2_RX_MAX   128   //串口数据接收缓存长度
+// HC_SR04_BASE - https://github.com/bjoernboeckle/HC_SR04
+// Copyright © 2022, Björn Böckle
+// MIT License
+
+
+
+
+
+// Initialize HC_SR04 sensor
 byte variable[Serial2_RX_MAX]; //串口接收缓存区
 u8_t state = IDLE;
 u8_t RX_buffer[256];
 u8_t len_ = 0;
 u8_t func = 0;
 u8_t len_reg = 0;
+unsigned long laserOnTime = 0;
+bool isLaserOn = false;
+unsigned long beepOnTime = 0;
+bool isBeepOn = false;
 
 int recvIndex = 0;
 int ReceieveByte_length;
+
+
 
 byte start_modbus[11] = {0x01,0x10,0x00,0x3B,0x00,0x01,0x02,0x00,0x04,0xA3,0x18};//开始定位
 byte stop_modbus[11] = {0x01,0x10,0x00,0x3B,0x00,0x01,0x02,0x00,0x00,0xA2,0xDB};//取消定位
@@ -55,6 +77,15 @@ void Stop_Location();
 void Get_Location();
 void Deal_With_Data();
 void Deal_With_Recieve_Data(u8_t func,u8_t len,u8_t *data);
+void beepOn(unsigned long duration);
+// 关闭蜂鸣器的函数
+void beepOff();
+void initHC_SR04Sensors();
+// Perform sensor measurements and print results
+void measureAndPrint();
+// Helper to print measured data for all sensors
+void printSensorMeasurements();
+void Start_Laser();
 void bee_3();
 typedef struct{
   uint16_t Tag_ID;  //标签ID
@@ -89,6 +120,9 @@ const int ANC_PROTOCAL_TIMESTAMP = 3; //基站时间戳信息标志位
 
 #define TAG_OUTPUT_DIST   0
 #define TAG_OUTPUT_RTLS   1
+
+
+
 
 const byte auchCRCHi[] = 
 { 	 
@@ -148,6 +182,7 @@ uint16_t CRC_Calculate(byte *pdata,int num)
 	return (uint16_t)(uchCRCHi << 8 | uchCRCLo) ;
 }
 
+
 void setup() 
 {
   Serial.begin(9600);
@@ -157,8 +192,10 @@ void setup()
   Serial2.begin(115200, SERIAL_8N1, SERIAL2_RX_PIN, SERIAL2_TX_PIN);
   pinMode(BEEP_PIN, OUTPUT);
   pinMode(LASER_PIN, OUTPUT);
-  digitalWrite(LASER_PIN, HIGH);
+  digitalWrite(LASER_PIN, LOW);
   digitalWrite(BEEP_PIN, HIGH);
+
+  Start_Location();
   bee_3();
 }
 
@@ -166,7 +203,11 @@ void loop()
 {
     Get_Location();
     Deal_With_Data();
-    
+    if(isBeepOn && (millis() - beepOnTime >= 500)){
+          digitalWrite(BEEP_PIN, HIGH); // 关闭蜂鸣器
+           digitalWrite(LASER_PIN,LOW);
+          isBeepOn = false;
+    }
 }
 void Deal_With_Data() {
   while (Serial1.available()) { // 检查Serial1是否有数据可读
@@ -215,36 +256,15 @@ void Deal_With_Data() {
     }
   }
 }
-void bee_3()
-{
-  digitalWrite(BEEP_PIN, LOW);
-  delay(100);
-  digitalWrite(BEEP_PIN, HIGH);
-  delay(100);
-  digitalWrite(BEEP_PIN, LOW);
-  delay(100);
-  digitalWrite(BEEP_PIN, HIGH);
-  delay(100);
-  digitalWrite(BEEP_PIN, LOW);
-  delay(100);
-  digitalWrite(BEEP_PIN, HIGH);
-}
 void Deal_With_Recieve_Data(u8_t func,u8_t len,u8_t *data)
 {
   switch (func)
   {
     case 0x01://蜂鸣器 bee bee bee
-      bee_3();
+          bee_3();
       break;
     case 0x02: //控制激光
-      if(data[0])
-      {
-        digitalWrite(LASER_PIN, HIGH);
-      }
-      else
-      {
-        digitalWrite(LASER_PIN, LOW);
-      }
+          bee_3();
       break;
     case 0x03://定位控制
       if(data[0])
@@ -257,6 +277,29 @@ void Deal_With_Recieve_Data(u8_t func,u8_t len,u8_t *data)
       }
   }
 }
+void bee_3()
+{
+
+        if (!isBeepOn) {
+        digitalWrite(LASER_PIN,HIGH);
+        digitalWrite(BEEP_PIN, LOW); // 开启激光
+        beepOnTime = millis(); // 记录激光开启的时间
+        isBeepOn = true;
+      }
+}
+
+void Start_Laser()
+{
+
+        if (!isLaserOn) {
+        digitalWrite(BEEP_PIN, HIGH); // 开启激光
+        laserOnTime = millis(); // 记录激光开启的时间
+        isLaserOn = true;
+      }
+}
+
+
+
 void Start_Location()
 {
         Serial2.write(start_modbus,11);
@@ -574,10 +617,12 @@ void Tag_RtlsDataRecv(byte *buff)
 // 分别发送 x 的高位字节和低位字节
 Serial1.write((x >> 8) & 0xFF); // 发送 x 的高位字节
 Serial1.write(x & 0xFF);        // 发送 x 的低位字节
-
+//bee_3();
 // 分别发送 y 的高位字节和低位字节
 Serial1.write((y >> 8) & 0xFF); // 发送 y 的高位字节
 Serial1.write(y & 0xFF);
     Serial1.write(0xAF);
   }
 }
+
+
